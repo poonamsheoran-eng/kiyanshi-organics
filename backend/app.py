@@ -1,16 +1,18 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import sqlite3
 import os
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
 # ================= CONFIGURATION =================
 SECRET_KEY = os.environ.get('SECRET_KEY', 'change-this-in-production')
 ADMIN_MOBILE = os.environ.get('ADMIN_MOBILE', '9999999999')
-DB_NAME = os.environ.get('DB_NAME', 'users.db')
+DATABASE_URL = os.environ.get('DATABASE_URL')  # Render provides this automatically
 ALLOWED_ORIGINS = os.environ.get('ALLOWED_ORIGINS', '*').split(',')
 
 CORS(app, resources={
@@ -26,82 +28,91 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 # ================= DATABASE =================
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
+    """Create PostgreSQL connection"""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     return conn
 
 
 def init_db():
+    """Initialize PostgreSQL database with tables"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    # Users table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        mobile TEXT UNIQUE NOT NULL,
+        id SERIAL PRIMARY KEY,
+        mobile VARCHAR(10) UNIQUE NOT NULL,
         password TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
+    # Products table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         quantity INTEGER NOT NULL,
-        price REAL NOT NULL,
+        price DECIMAL(10, 2) NOT NULL,
         unit TEXT NOT NULL
     )
     """)
 
+    # Addresses table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS addresses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
         name TEXT,
-        mobile TEXT,
+        mobile VARCHAR(10),
         address_line TEXT NOT NULL,
         city TEXT,
         state TEXT,
-        pincode TEXT,
-        FOREIGN KEY (user_id) REFERENCES users(id)
+        pincode VARCHAR(6)
     )
     """)
 
+    # Orders table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        address_id INTEGER NOT NULL,
-        total_amount REAL NOT NULL,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        address_id INTEGER NOT NULL REFERENCES addresses(id),
+        total_amount DECIMAL(10, 2) NOT NULL,
         status TEXT DEFAULT 'PLACED',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id),
-        FOREIGN KEY (address_id) REFERENCES addresses(id)
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
+    # Order items table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS order_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id),
         product_name TEXT,
-        price REAL,
+        price DECIMAL(10, 2),
         quantity INTEGER,
-        unit TEXT,
-        FOREIGN KEY (order_id) REFERENCES orders(id)
+        unit TEXT
     )
     """)
 
+    # Create indexes
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_mobile ON users(mobile)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_addresses_user ON addresses(user_id)")
 
     conn.commit()
+    cursor.close()
     conn.close()
 
 
-init_db()
+# Initialize database on startup
+try:
+    init_db()
+    print("✅ Database initialized successfully")
+except Exception as e:
+    print(f"⚠️ Database initialization error: {e}")
 
 
 # ================= UTILITIES =================
@@ -135,7 +146,15 @@ def admin_required(f):
 # ================= HEALTH =================
 @app.route("/api/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy"}), 200
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        return jsonify({"status": "healthy", "database": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
 # ================= AUTH =================
@@ -156,22 +175,25 @@ def auth():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT password FROM users WHERE mobile=?", (mobile,))
+    cursor.execute("SELECT password FROM users WHERE mobile=%s", (mobile,))
     user = cursor.fetchone()
 
     if not user:
         hashed = generate_password_hash(password)
-        cursor.execute("INSERT INTO users (mobile, password) VALUES (?, ?)", (mobile, hashed))
+        cursor.execute("INSERT INTO users (mobile, password) VALUES (%s, %s)", (mobile, hashed))
         conn.commit()
+        cursor.close()
         conn.close()
         role = "admin" if mobile == ADMIN_MOBILE else "customer"
         return jsonify({"message": "Account created", "role": role}), 201
 
     if check_password_hash(user["password"], password):
+        cursor.close()
         conn.close()
         role = "admin" if mobile == ADMIN_MOBILE else "customer"
         return jsonify({"message": "Login successful", "role": role}), 200
 
+    cursor.close()
     conn.close()
     return jsonify({"error": "Invalid credentials"}), 401
 
@@ -181,8 +203,9 @@ def auth():
 def get_products():
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM products")
+    cursor.execute("SELECT * FROM products ORDER BY id")
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
     return jsonify([dict(row) for row in rows]), 200
 
@@ -194,10 +217,11 @@ def add_product():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO products (name, quantity, price, unit) VALUES (?, ?, ?, ?)",
+        "INSERT INTO products (name, quantity, price, unit) VALUES (%s, %s, %s, %s)",
         (data["name"], data["quantity"], data["price"], data["unit"])
     )
     conn.commit()
+    cursor.close()
     conn.close()
     return jsonify({"message": "Product added"}), 201
 
@@ -209,10 +233,11 @@ def update_product(product_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE products SET name=?, quantity=?, price=?, unit=? WHERE id=?",
+        "UPDATE products SET name=%s, quantity=%s, price=%s, unit=%s WHERE id=%s",
         (data["name"], data["quantity"], data["price"], data["unit"], product_id)
     )
     conn.commit()
+    cursor.close()
     conn.close()
     return jsonify({"message": "Product updated"}), 200
 
@@ -222,8 +247,9 @@ def update_product(product_id):
 def delete_product(product_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
+    cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
     conn.commit()
+    cursor.close()
     conn.close()
     return jsonify({"message": "Product deleted"}), 200
 
@@ -236,19 +262,21 @@ def get_addresses(mobile):
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE mobile=?", (mobile,))
+    cursor.execute("SELECT id FROM users WHERE mobile=%s", (mobile,))
     user = cursor.fetchone()
 
     if not user:
+        cursor.close()
         conn.close()
         return jsonify([]), 200
 
     cursor.execute("""
         SELECT id, name, mobile, address_line, city, state, pincode
-        FROM addresses WHERE user_id=?
+        FROM addresses WHERE user_id=%s
     """, (user['id'],))
 
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
     return jsonify([dict(row) for row in rows]), 200
 
@@ -267,10 +295,11 @@ def add_address():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE mobile=?", (mobile,))
+    cursor.execute("SELECT id FROM users WHERE mobile=%s", (mobile,))
     user = cursor.fetchone()
 
     if not user:
+        cursor.close()
         conn.close()
         return jsonify({"error": "User not found"}), 404
 
@@ -278,7 +307,8 @@ def add_address():
     cursor.execute("""
         INSERT INTO addresses
         (user_id, name, mobile, address_line, city, state, pincode)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
     """, (
         user_id,
         data.get("name"),
@@ -289,8 +319,9 @@ def add_address():
         data.get("pincode")
     ))
 
+    address_id = cursor.fetchone()['id']
     conn.commit()
-    address_id = cursor.lastrowid
+    cursor.close()
     conn.close()
     return jsonify({"message": "Address saved successfully", "id": address_id}), 201
 
@@ -308,10 +339,11 @@ def place_order():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE mobile=?", (mobile,))
+    cursor.execute("SELECT id FROM users WHERE mobile=%s", (mobile,))
     user = cursor.fetchone()
 
     if not user:
+        cursor.close()
         conn.close()
         return jsonify({"error": "User not found"}), 404
 
@@ -320,16 +352,17 @@ def place_order():
 
     cursor.execute("""
         INSERT INTO orders (user_id, address_id, total_amount)
-        VALUES (?, ?, ?)
+        VALUES (%s, %s, %s)
+        RETURNING id
     """, (user_id, address_id, total))
 
-    order_id = cursor.lastrowid
+    order_id = cursor.fetchone()['id']
 
     for item in cart:
         cursor.execute("""
             INSERT INTO order_items
             (order_id, product_name, price, quantity, unit)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
         """, (
             order_id,
             item["name"],
@@ -339,6 +372,7 @@ def place_order():
         ))
 
     conn.commit()
+    cursor.close()
     conn.close()
     return jsonify({"message": "Order placed", "order_id": order_id}), 201
 
@@ -347,10 +381,11 @@ def place_order():
 def my_orders(mobile):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE mobile=?", (mobile,))
+    cursor.execute("SELECT id FROM users WHERE mobile=%s", (mobile,))
     user = cursor.fetchone()
 
     if not user:
+        cursor.close()
         conn.close()
         return jsonify([]), 200
 
@@ -360,7 +395,7 @@ def my_orders(mobile):
                a.address_line, a.city
         FROM orders o
         JOIN addresses a ON o.address_id = a.id
-        WHERE o.user_id=?
+        WHERE o.user_id=%s
         ORDER BY o.id DESC
     """, (user_id,))
 
@@ -372,20 +407,21 @@ def my_orders(mobile):
         cursor.execute("""
             SELECT product_name, price, quantity, unit
             FROM order_items
-            WHERE order_id=?
+            WHERE order_id=%s
         """, (order_id,))
         items = cursor.fetchall()
 
         result.append({
             "id": order['id'],
-            "total_amount": order['total_amount'],
+            "total_amount": float(order['total_amount']),
             "status": order['status'],
-            "created_at": order['created_at'],
+            "created_at": order['created_at'].isoformat() if order['created_at'] else None,
             "address_line": order['address_line'],
             "city": order['city'],
             "items": [dict(item) for item in items]
         })
 
+    cursor.close()
     conn.close()
     return jsonify(result), 200
 
@@ -412,16 +448,16 @@ def admin_orders(mobile):
         cursor.execute("""
             SELECT product_name, price, quantity, unit
             FROM order_items
-            WHERE order_id=?
+            WHERE order_id=%s
         """, (order_id,))
         items_raw = cursor.fetchall()
 
         result.append({
             "order_id": order['id'],
             "mobile": order['mobile'],
-            "total_amount": order['total_amount'],
+            "total_amount": float(order['total_amount']),
             "status": order['status'],
-            "created_at": order['created_at'],
+            "created_at": order['created_at'].isoformat() if order['created_at'] else None,
             "address": {
                 "name": order['name'],
                 "address_line": order['address_line'],
@@ -432,6 +468,7 @@ def admin_orders(mobile):
             "items": [dict(item) for item in items_raw]
         })
 
+    cursor.close()
     conn.close()
     return jsonify(result), 200
 
@@ -450,15 +487,17 @@ def update_order_status():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE orders SET status=? WHERE id=?",
+        "UPDATE orders SET status=%s WHERE id=%s",
         (status, order_id)
     )
 
     if cursor.rowcount == 0:
+        cursor.close()
         conn.close()
         return jsonify({"error": "Order not found"}), 404
 
     conn.commit()
+    cursor.close()
     conn.close()
 
     return jsonify({"message": "Status updated"}), 200
@@ -466,4 +505,5 @@ def update_order_status():
 
 # ================= RUN =================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
