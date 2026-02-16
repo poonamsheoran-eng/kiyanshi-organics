@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Kiyanshi Organics - Cart</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 30px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .btn { background: #fbbf24; border: none; padding: 10px 16px; cursor: pointer; border-radius: 6px; font-weight: bold; margin-right: 5px; }
+        .danger { background: #ef4444; color: white; }
+        table { width: 100%; background: white; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; }
+        .box { background: white; padding: 15px; margin-top: 20px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <div>
+        <h1>Kiyanshi Organics</h1>
+        <p>Your Cart</p>
+    </div>
+    <div>
+        <button class="btn" onclick="goBack()">← Back to Shop</button>
+        <button class="btn danger" onclick="logout()">🚪 Logout</button>
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Product</th>
+            <th>Quantity</th>
+            <th>Price</th>
+            <th>Total</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody id="cartTable"></tbody>
+</table>
+
+<h3 id="grandTotal"></h3>
+
+<button class="btn" onclick="openAddressBox()">Place Order</button>
+<button class="btn danger" onclick="clearCart()">Clear Cart</button>
+
+<!-- ADDRESS SECTION -->
+<div id="addressBox" class="box" style="display:none">
+    <h3>Select Delivery Address</h3>
+    <div id="addressList"></div>
+    <hr>
+    <h4>Add New Address</h4>
+    <input id="name" placeholder="Name" style="width:100%;padding:8px;margin:5px 0"><br>
+    <input id="line" placeholder="Address Line" style="width:100%;padding:8px;margin:5px 0"><br>
+    <input id="city" placeholder="City" style="width:100%;padding:8px;margin:5px 0"><br>
+    <input id="state" placeholder="State" style="width:100%;padding:8px;margin:5px 0"><br>
+    <input id="pincode" placeholder="Pincode" style="width:100%;padding:8px;margin:5px 0"><br><br>
+    <button class="btn" onclick="addAddress()">Save Address</button>
+    <button class="btn" onclick="confirmOrder()">Confirm Order</button>
+</div>
+
+<script>
+const API_URL = '/api';
+const mobile = sessionStorage.getItem("mobile") || localStorage.getItem("mobile");
+
+if (!mobile) {
+    alert("Please login first");
+    window.location.href = "index.html";
+}
+
+let cart = JSON.parse(localStorage.getItem("cart")) || [];
+let selectedAddress = null;
+
+function loadCart() {
+    const table = document.getElementById("cartTable");
+    table.innerHTML = "";
+    let total = 0;
+
+    if (cart.length === 0) {
+        table.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px">Your cart is empty</td></tr>';
+        document.getElementById("grandTotal").innerText = "Grand Total: ₹0.00";
+        return;
+    }
+
+    cart.forEach((item, index) => {
+        const itemTotal = item.price * item.quantity;
+        total += itemTotal;
+        table.innerHTML += `
+            <tr>
+                <td>${item.name} (${item.unit})</td>
+                <td>${item.quantity}</td>
+                <td>₹${parseFloat(item.price).toFixed(2)}</td>
+                <td>₹${itemTotal.toFixed(2)}</td>
+                <td>
+                    <button class="danger" onclick="removeItem(${index})">Remove</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    document.getElementById("grandTotal").innerText = "Grand Total: ₹" + total.toFixed(2);
+}
+
+function removeItem(index) {
+    cart.splice(index, 1);
+    localStorage.setItem("cart", JSON.stringify(cart));
+    loadCart();
+}
+
+function clearCart() {
+    if (!confirm("Clear entire cart?")) return;
+    localStorage.removeItem("cart");
+    cart = [];
+    loadCart();
+}
+
+function openAddressBox(autoSelectLast = false) {
+    if (cart.length === 0) {
+        alert("Cart is empty");
+        return;
+    }
+
+    document.getElementById("addressBox").style.display = "block";
+    loadAddresses(autoSelectLast);
+}
+
+function loadAddresses(autoSelectLast = false) {
+    fetch(`${API_URL}/addresses/${mobile}`)
+    .then(res => {
+        if (!res.ok) {
+            throw new Error('Failed to load addresses');
+        }
+        return res.json();
+    })
+    .then(data => {
+        console.log('Addresses loaded:', data); // Debug
+        const list = document.getElementById("addressList");
+        
+        if (!data || data.length === 0) {
+            list.innerHTML = "<p>No saved addresses. Please add one below.</p>";
+            return;
+        }
+
+        let html = "";
+        data.forEach((addr, index) => {
+            // Backend returns objects with keys: id, name, mobile, address_line, city, state, pincode
+            const displayName = addr.name || 'No Name';
+            const displayLine = addr.address_line || '';
+            const displayCity = addr.city || '';
+            const displayPincode = addr.pincode || '';
+            
+            html += `
+                <label style="display:block;margin:10px 0;cursor:pointer;">
+                    <input type="radio" name="addr" value="${addr.id}" onchange="selectedAddress=${addr.id}">
+                    <strong>${displayName}</strong> - ${displayLine}, ${displayCity} - ${displayPincode}
+                </label>
+            `;
+        });
+        
+        list.innerHTML = html;
+
+        // Auto-select last address if requested
+        if (autoSelectLast && data.length > 0) {
+            selectedAddress = data[data.length - 1].id;
+            const radios = document.getElementsByName("addr");
+            radios[radios.length - 1].checked = true;
+        }
+    })
+    .catch(err => {
+        console.error('Error loading addresses:', err);
+        alert("Error loading addresses: " + err.message);
+        document.getElementById("addressList").innerHTML = 
+            "<p style='color:red'>Error loading addresses. Please try again.</p>";
+    });
+}
+
+function addAddress() {
+    const nameVal = document.getElementById("name").value.trim();
+    const lineVal = document.getElementById("line").value.trim();
+    const cityVal = document.getElementById("city").value.trim();
+    const stateVal = document.getElementById("state").value.trim();
+    const pincodeVal = document.getElementById("pincode").value.trim();
+
+    if (!lineVal || !cityVal) {
+        alert("Please fill required fields (Address Line and City)");
+        return;
+    }
+
+    const newAddress = {
+        mobile: mobile,
+        name: nameVal,
+        address_line: lineVal,
+        city: cityVal,
+        state: stateVal,
+        pincode: pincodeVal
+    };
+
+    console.log('Sending address:', newAddress); // Debug
+
+    fetch(`${API_URL}/address`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(newAddress)
+    })
+    .then(res => {
+        if (!res.ok) {
+            return res.json().then(err => {
+                throw new Error(err.error || 'Failed to save address');
+            });
+        }
+        return res.json();
+    })
+    .then(() => {
+        alert("Address saved!");
+        // Clear form
+        document.getElementById("name").value = "";
+        document.getElementById("line").value = "";
+        document.getElementById("city").value = "";
+        document.getElementById("state").value = "";
+        document.getElementById("pincode").value = "";
+        // Reload addresses and auto-select the new one
+        loadAddresses(true);
+    })
+    .catch(err => {
+        console.error('Error saving address:', err);
+        alert("Error saving address: " + err.message);
+    });
+}
+
+function confirmOrder() {
+    if (!selectedAddress) {
+        alert("Please select a delivery address");
+        return;
+    }
+
+    if (cart.length === 0) {
+        alert("Cart is empty");
+        return;
+    }
+
+    console.log('Placing order:', { mobile, address_id: selectedAddress, cart }); // Debug
+
+    fetch(`${API_URL}/order`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ 
+            mobile: mobile, 
+            address_id: selectedAddress, 
+            cart: cart 
+        })
+    })
+    .then(res => {
+        if (!res.ok) {
+            return res.json().then(err => {
+                throw new Error(err.error || 'Failed to place order');
+            });
+        }
+        return res.json();
+    })
+    .then(() => {
+        localStorage.removeItem("cart");
+        cart = [];
+        alert("Order placed successfully!");
+        window.location.href = "orders.html";
+    })
+    .catch(err => {
+        console.error('Error placing order:', err);
+        alert("Error placing order: " + err.message);
+    });
+}
+
+function goBack() {
+    window.location.href = "customer.html";
+}
+
+function logout() {
+    if (confirm("Are you sure you want to logout?")) {
+        sessionStorage.clear();
+        localStorage.removeItem("mobile");
+        localStorage.removeItem("cart");
+        window.location.href = "index.html";
+    }
+}
+
+window.onload = loadCart;
+</script>
+</body>
+</html>

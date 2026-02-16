@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Kiyanshi Organics - Shop</title>
+    <style>
+        body { font-family: Arial; background:#f5f5f5; padding:30px; }
+        .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; }
+        .btn { background:#fbbf24; border:none; padding:10px 16px; border-radius:6px; cursor:pointer; font-weight:bold; margin-left: 5px; }
+        .btn-danger { background:#ef4444; color:white; }
+        table { width:100%; background:white; border-collapse:collapse; margin-top:20px; }
+        th,td { padding:12px; border-bottom:1px solid #ddd; }
+        input[type="number"] { width:70px; padding:5px; }
+    </style>
+</head>
+<body>
+<div class="top-bar">
+    <div>
+        <h1>Kiyanshi Organics</h1>
+        <p>Fresh & Organic Products</p>
+    </div>
+    <div>
+        <button class="btn" onclick="goToCart()">🛒 View Cart</button>
+        <button class="btn" onclick="goToOrders()">📦 My Orders</button>
+        <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
+    </div>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>Product</th>
+            <th>Available</th>
+            <th>Price</th>
+            <th>Quantity</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody id="productTable"></tbody>
+</table>
+<script>
+const API_URL = '/api';
+const mobile = sessionStorage.getItem("mobile") || localStorage.getItem("mobile");
+
+if (!mobile) {
+    alert("Please login first");
+    window.location.href = "index.html";
+}
+
+function getCart() {
+    return JSON.parse(localStorage.getItem("cart") || "[]");
+}
+
+function loadProducts() {
+    fetch(`${API_URL}/products`)
+        .then(res => res.json())
+        .then(products => {
+            const table = document.getElementById("productTable");
+            table.innerHTML = "";
+            
+            if (products.length === 0) {
+                table.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px">No products available</td></tr>';
+                return;
+            }
+            
+            products.forEach(p => {
+                const safeName = String(p.name).replace(/'/g, "\\'");
+                const safeUnit = String(p.unit).replace(/'/g, "\\'");
+                table.innerHTML += `
+                    <tr>
+                        <td>${p.name} (${p.unit})</td>
+                        <td>${p.quantity}</td>
+                        <td>₹${p.price}</td>
+                        <td>
+                            <input type="number" min="1" max="${p.quantity}" value="1" id="qty-${p.id}">
+                        </td>
+                        <td>
+                            <button class="btn" onclick="addToCart(${p.id}, '${safeName}', ${p.price}, '${safeUnit}', ${p.quantity})">
+                                Add to Cart
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            });
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById("productTable").innerHTML = 
+                '<tr><td colspan="5" style="text-align:center;padding:30px;color:red">Error loading products</td></tr>';
+        });
+}
+
+function addToCart(id, name, price, unit, maxQty) {
+    let cart = getCart();
+    const qtyInput = document.getElementById(`qty-${id}`);
+    const qty = parseInt(qtyInput.value);
+    
+    if (!qty || qty < 1) {
+        alert("Please enter valid quantity");
+        return;
+    }
+    
+    if (qty > maxQty) {
+        alert(`Only ${maxQty} units available`);
+        return;
+    }
+    
+    const existing = cart.find(item => item.id === id);
+    if (existing) {
+        existing.quantity += qty;
+    } else {
+        cart.push({ id, name, price, unit, quantity: qty });
+    }
+    localStorage.setItem("cart", JSON.stringify(cart));
+    alert("Added to cart");
+}
+
+function goToCart() {
+    window.location.href = "cart.html";
+}
+
+function goToOrders() {
+    window.location.href = "orders.html";
+}
+
+function logout() {
+    if (confirm("Are you sure you want to logout?")) {
+        sessionStorage.clear();
+        localStorage.removeItem("mobile");
+        localStorage.removeItem("cart");
+        window.location.href = "index.html";
+    }
+}
+
+window.addEventListener("pageshow", function(event) {
+    if (event.persisted) {
+        window.location.reload(true);
+    }
+});
+
+window.onload = loadProducts;
+</script>
+</body>
+</html>

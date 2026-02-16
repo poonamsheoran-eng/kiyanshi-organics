@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>My Orders - Kiyanshi Organics</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 30px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .btn { background: #fbbf24; border: none; padding: 8px 14px; cursor: pointer; border-radius: 6px; font-weight: bold; margin-right: 5px; }
+        .btn-danger { background: #ef4444; color: white; }
+        h1 { margin-bottom: 10px; }
+        table { width: 100%; background: white; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; vertical-align: top; }
+        .status { font-weight: bold; }
+        .PLACED { color: orange; }
+        .CONFIRMED { color: blue; }
+        .SHIPPED { color: purple; }
+        .DELIVERED { color: green; }
+        .items-box { background: #fafafa; padding: 10px; margin-top: 8px; border-radius: 6px; font-size: 14px; }
+        .item-line { margin-bottom: 5px; }
+        .no-orders { text-align: center; padding: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <div>
+        <h1>Kiyanshi Organics</h1>
+        <p>My Orders</p>
+    </div>
+    <div>
+        <button class="btn" onclick="goToShop()">🛒 Continue Shopping</button>
+        <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Order ID</th>
+            <th>Date</th>
+            <th>Delivery Address & Items</th>
+            <th>Total</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody id="ordersTable"></tbody>
+</table>
+
+<script>
+const API_URL = '/api';
+const mobile = sessionStorage.getItem("mobile") || localStorage.getItem("mobile");
+
+if (!mobile) {
+    alert("Session expired. Please login again.");
+    window.location.href = "index.html";
+}
+
+function loadOrders() {
+    fetch(`${API_URL}/my-orders/${mobile}`)
+        .then(res => res.json())
+        .then(data => {
+            let html = "";
+            if (!data || data.length === 0) {
+                html = `<tr><td colspan="5" class="no-orders">No orders found</td></tr>`;
+            } else {
+                data.forEach(o => {
+                    let itemsHtml = "";
+                    
+                    if (o.items && o.items.length > 0) {
+                        o.items.forEach(item => {
+                            itemsHtml += `
+                                <div class="item-line">
+                                    ${item.product_name} (${item.unit}) 
+                                    — Qty: ${item.quantity} 
+                                    — ₹${item.price}
+                                </div>
+                            `;
+                        });
+                    } else {
+                        itemsHtml = "No items found";
+                    }
+                    
+                    html += `
+                        <tr>
+                            <td>#${o.id}</td>
+                            <td>${new Date(o.created_at).toLocaleString()}</td>
+                            <td>
+                                ${o.address_line}, ${o.city}
+                                <div class="items-box">
+                                    <strong>Items:</strong>
+                                    <div>${itemsHtml}</div>
+                                </div>
+                            </td>
+                            <td>₹${o.total_amount}</td>
+                            <td class="status ${o.status}">${o.status}</td>
+                        </tr>
+                    `;
+                });
+            }
+            document.getElementById("ordersTable").innerHTML = html;
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById("ordersTable").innerHTML =
+                `<tr><td colspan="5" class="no-orders">Error loading orders</td></tr>`;
+        });
+}
+
+function goToShop() {
+    window.location.href = "customer.html";
+}
+
+function logout() {
+    if (confirm("Are you sure you want to logout?")) {
+        sessionStorage.clear();
+        localStorage.removeItem("mobile");
+        localStorage.removeItem("cart");
+        window.location.href = "index.html";
+    }
+}
+
+loadOrders();
+
+// Auto refresh every 10 seconds
+setInterval(loadOrders, 10000);
+</script>
+</body>
+</html>

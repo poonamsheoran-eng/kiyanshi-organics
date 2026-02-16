@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - Orders</title>
+    <style>
+        body { font-family: Arial; background: #f5f5f5; padding: 30px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .btn { background: #fbbf24; border: none; padding: 8px 14px; cursor: pointer; border-radius: 6px; font-weight: bold; margin-right: 5px; }
+        .btn-danger { background: #ef4444; color: white; }
+        .order-card { background: white; padding: 20px; margin-bottom: 20px; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; }
+        select { padding: 6px; }
+        .total { margin-top: 10px; font-weight: bold; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <h1>Admin - Customer Orders</h1>
+    <div>
+        <button class="btn" onclick="goToProducts()">🏪 Products</button>
+        <button class="btn btn-danger" onclick="logout()">🚪 Logout</button>
+    </div>
+</div>
+
+<div id="ordersContainer"></div>
+
+<script>
+const API_URL = '/api';
+const mobile = sessionStorage.getItem("mobile") || localStorage.getItem("mobile");
+const role = sessionStorage.getItem("role");
+
+if (!mobile || role !== 'admin') {
+    alert("Access Denied");
+    window.location.href = "index.html";
+}
+
+function loadOrders() {
+    fetch(`${API_URL}/admin/orders/${mobile}`)
+    .then(res => {
+        if (res.status === 403) {
+            alert("Unauthorized Access");
+            window.location.href = "index.html";
+            return;
+        }
+        return res.json();
+    })
+    .then(data => {
+        const container = document.getElementById("ordersContainer");
+        container.innerHTML = "";
+
+        if (data.length === 0) {
+            container.innerHTML = "<p>No orders found</p>";
+            return;
+        }
+
+        data.forEach(order => {
+            let itemsHTML = `
+                <table>
+                    <tr>
+                        <th>Product</th>
+                        <th>Quantity</th>
+                        <th>Price (Per Unit)</th>
+                        <th>Subtotal</th>
+                    </tr>
+            `;
+
+            let calculatedTotal = 0;
+
+            order.items.forEach(item => {
+                const price = parseFloat(item.price);
+                const qty = parseInt(item.quantity);
+                const subtotal = price * qty;
+                calculatedTotal += subtotal;
+
+                itemsHTML += `
+                    <tr>
+                        <td>${item.product_name} (${item.unit})</td>
+                        <td>${qty}</td>
+                        <td>₹${price.toFixed(2)}</td>
+                        <td>₹${subtotal.toFixed(2)}</td>
+                    </tr>
+                `;
+            });
+
+            itemsHTML += `</table>`;
+
+            container.innerHTML += `
+                <div class="order-card">
+                    <h3>Order ID: ${order.order_id}</h3>
+                    <p><b>Customer:</b> ${order.mobile}</p>
+                    <p><b>Date:</b> ${order.created_at}</p>
+
+                    <p><b>Address:</b><br>
+                        ${order.address.name || 'N/A'}<br>
+                        ${order.address.address_line}<br>
+                        ${order.address.city}, ${order.address.state} - ${order.address.pincode}
+                    </p>
+
+                    ${itemsHTML}
+
+                    <p class="total">
+                        Total Order Value: ₹${parseFloat(order.total_amount || calculatedTotal).toFixed(2)}
+                    </p>
+
+                    <p>
+                        <b>Status:</b>
+                        <select onchange="updateStatus(${order.order_id}, this.value)">
+                            <option ${order.status==='PLACED'?'selected':''}>PLACED</option>
+                            <option ${order.status==='CONFIRMED'?'selected':''}>CONFIRMED</option>
+                            <option ${order.status==='SHIPPED'?'selected':''}>SHIPPED</option>
+                            <option ${order.status==='DELIVERED'?'selected':''}>DELIVERED</option>
+                            <option ${order.status==='CANCELLED'?'selected':''}>CANCELLED</option>
+                        </select>
+                    </p>
+                </div>
+            `;
+        });
+    })
+    .catch(err => {
+        console.error(err);
+        document.getElementById("ordersContainer").innerHTML = 
+            '<p style="color:red">Error loading orders</p>';
+    });
+}
+
+function updateStatus(orderId, newStatus) {
+    fetch(`${API_URL}/admin/order/status`, {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            order_id: orderId,
+            status: newStatus,
+            mobile: mobile
+        })
+    })
+    .then(res => {
+        if (res.status === 403) {
+            alert("Unauthorized");
+            window.location.href = "index.html";
+            return;
+        }
+        return res.json();
+    })
+    .then(() => {
+        alert("Status updated");
+        loadOrders();
+    })
+    .catch(err => {
+        console.error(err);
+        alert("Error updating status");
+    });
+}
+
+function goToProducts() {
+    window.location.href = "admin.html";
+}
+
+function logout() {
+    if (confirm("Are you sure you want to logout?")) {
+        sessionStorage.clear();
+        localStorage.removeItem("mobile");
+        window.location.href = "index.html";
+    }
+}
+
+window.onload = loadOrders;
+</script>
+
+</body>
+</html>
