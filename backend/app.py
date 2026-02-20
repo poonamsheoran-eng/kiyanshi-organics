@@ -12,8 +12,23 @@ from datetime import datetime
 import time
 import uuid
 from flask import g
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+SENTRY_DSN = os.environ.get('SENTRY_DSN')
+
 
 app = Flask(__name__)
+
+SENTRY_DSN = os.environ.get('SENTRY_DSN')
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=1.0,  # 100% of transactions for performance monitoring
+        environment="production"
+    )
 
 # ================= LOGGING CONFIGURATION =================
 logging.basicConfig(
@@ -563,7 +578,14 @@ def update_order_status():
     return jsonify({"message": "Status updated"}), 200
 
 
+@app.route("/api/test-error")
+def test_error():
+    logger.error("Testing Sentry error tracking")
+    raise Exception("This is a test error!")
+
 # ================= RUN =================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
