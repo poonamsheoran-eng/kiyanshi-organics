@@ -6,8 +6,33 @@ from functools import wraps
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from urllib.parse import urlparse
+import logging
+import sys
+from datetime import datetime
+import time
+import uuid
+from flask import g
 
 app = Flask(__name__)
+
+# ================= LOGGING CONFIGURATION =================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# Add request_id to logs
+class RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = getattr(g, 'request_id', 'N/A')
+        return True
+
+logger.addFilter(RequestIdFilter())
 
 # ================= CONFIGURATION =================
 SECRET_KEY = os.environ.get('SECRET_KEY', 'change-this-in-production')
@@ -142,24 +167,48 @@ def admin_required(f):
 
     return decorated_function
 
+# ================= REQUEST LOGGING MIDDLEWARE =================
+@app.before_request
+def before_request():
+    """Log incoming requests"""
+    g.start_time = time.time()
+    g.request_id = str(uuid.uuid4())[:8]  # Short request ID
+    logger.info(f"Request: {request.method} {request.path}")
+
+
+@app.after_request
+def after_request(response):
+    """Log response time and status"""
+    if hasattr(g, 'start_time'):
+        elapsed = time.time() - g.start_time
+        logger.info(
+            f"Response: {request.method} {request.path} - "
+            f"Status: {response.status_code} - "
+            f"Time: {elapsed:.3f}s"
+        )
+    return response
 
 # ================= HEALTH =================
 @app.route("/api/health", methods=["GET"])
 def health_check():
+    logger.info("Health check requested")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         cursor.close()
         conn.close()
+        logger.info("Health check passed - database connected")
         return jsonify({"status": "healthy", "database": "connected"}), 200
     except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
 # ================= AUTH =================
 @app.route("/api/auth", methods=["POST"])
 def auth():
+    logger.info("Authentication attempt")
     data = request.get_json()
     mobile = data.get("mobile")
     password = data.get("password")
@@ -185,29 +234,38 @@ def auth():
         cursor.close()
         conn.close()
         role = "admin" if mobile == ADMIN_MOBILE else "customer"
+        logger.info(f"New account created for mobile: {mobile[-4:]}**** - Role: {role}")
         return jsonify({"message": "Account created", "role": role}), 201
 
     if check_password_hash(user["password"], password):
         cursor.close()
         conn.close()
         role = "admin" if mobile == ADMIN_MOBILE else "customer"
+        logger.info(f"Login successful for mobile: {mobile[-4:]}**** - Role: {role}")
         return jsonify({"message": "Login successful", "role": role}), 200
 
     cursor.close()
     conn.close()
+    logger.warning(f"Failed login attempt for mobile: {mobile[-4:]}****")
     return jsonify({"error": "Invalid credentials"}), 401
 
 
 # ================= PRODUCTS =================
 @app.route("/api/products", methods=["GET"])
 def get_products():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM products ORDER BY id")
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return jsonify([dict(row) for row in rows]), 200
+    logger.info("Fetching all products")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM products ORDER BY id")
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        logger.info(f"Successfully fetched {len(rows)} products")
+        return jsonify([dict(row) for row in rows]), 200
+    except Exception as e:
+        logger.error(f"Error fetching products: {str(e)}")
+        return jsonify({"error": "Failed to fetch products"}), 500
 
 
 @app.route("/api/admin/products", methods=["POST"])
@@ -329,6 +387,7 @@ def add_address():
 # ================= ORDERS =================
 @app.route("/api/order", methods=["POST"])
 def place_order():
+    logger.info("Order placement initiated")
     data = request.get_json()
     mobile = data.get("mobile")
     address_id = data.get("address_id")
@@ -374,6 +433,7 @@ def place_order():
     conn.commit()
     cursor.close()
     conn.close()
+    logger.info(f"Order placed successfully - Order ID: {order_id}, Total: ₹{total:.2f}")
     return jsonify({"message": "Order placed", "order_id": order_id}), 201
 
 
