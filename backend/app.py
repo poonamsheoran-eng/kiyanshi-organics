@@ -49,6 +49,41 @@ class RequestIdFilter(logging.Filter):
 
 logger.addFilter(RequestIdFilter())
 
+# ================= METRICS TRACKING =================
+from collections import defaultdict
+import threading
+from datetime import datetime
+
+# Global metrics storage (in-memory)
+metrics = defaultdict(float)  # Use float to support decimal values
+metrics_lock = threading.Lock()  # Thread safety
+metrics['app_start_time'] = datetime.now().timestamp()
+
+def track_metric(metric_name, value=1):
+    """
+    Thread-safe metric tracking
+    
+    Args:
+        metric_name: Name of the metric to track
+        value: Amount to add (default 1)
+    
+    Example:
+        track_metric('orders_placed')  # Increment by 1
+        track_metric('orders_total_value', 599.99)  # Add specific value
+    """
+    with metrics_lock:
+        metrics[metric_name] += value
+
+def get_all_metrics():
+    """Get a snapshot of all metrics (thread-safe)"""
+    with metrics_lock:
+        # Calculate uptime
+        uptime = datetime.now().timestamp() - metrics['app_start_time']
+        snapshot = dict(metrics)
+        snapshot['uptime_seconds'] = int(uptime)
+        snapshot['uptime_hours'] = round(uptime / 3600, 2)
+        return snapshot
+
 # ================= CONFIGURATION =================
 SECRET_KEY = os.environ.get('SECRET_KEY', 'change-this-in-production')
 ADMIN_MOBILE = os.environ.get('ADMIN_MOBILE', '9999999999')
@@ -201,6 +236,10 @@ def after_request(response):
             f"Status: {response.status_code} - "
             f"Time: {elapsed:.3f}s"
         )
+        if response.status_code >= 500:  # ← ADD THESE LINES
+            track_metric('errors_5xx')
+        elif response.status_code >= 400:
+            track_metric('errors_4xx')
     return response
 
 # ================= HEALTH =================
@@ -219,6 +258,40 @@ def health_check():
         logger.error(f"Health check failed: {str(e)}")
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
+# ================= METRICS =================
+@app.route("/api/metrics", methods=["GET"])
+def get_metrics():
+    """
+    Expose application metrics
+    
+    Returns real-time metrics about application usage
+    """
+    logger.info("Metrics requested")
+    
+    metrics_data = get_all_metrics()
+    
+    # Calculate derived metrics
+    total_logins = metrics_data.get('login_successful', 0) + metrics_data.get('login_failed', 0)
+    login_success_rate = 0
+    if total_logins > 0:
+        login_success_rate = round(
+            (metrics_data.get('login_successful', 0) / total_logins) * 100, 
+            2
+        )
+    
+    # Calculate conversion rate (orders / product views)
+    conversion_rate = 0
+    if metrics_data.get('products_viewed', 0) > 0:
+        conversion_rate = round(
+            (metrics_data.get('orders_placed', 0) / metrics_data.get('products_viewed', 0)) * 100,
+            2
+        )
+    
+    # Add calculated metrics
+    metrics_data['login_success_rate_percent'] = login_success_rate
+    metrics_data['conversion_rate_percent'] = conversion_rate
+    
+    return jsonify(metrics_data), 200
 
 # ================= AUTH =================
 @app.route("/api/auth", methods=["POST"])
@@ -257,11 +330,13 @@ def auth():
         conn.close()
         role = "admin" if mobile == ADMIN_MOBILE else "customer"
         logger.info(f"Login successful for mobile: {mobile[-4:]}**** - Role: {role}")
+        track_metric('login_successful')
         return jsonify({"message": "Login successful", "role": role}), 200
 
     cursor.close()
     conn.close()
     logger.warning(f"Failed login attempt for mobile: {mobile[-4:]}****")
+    track_metric('login_failed')
     return jsonify({"error": "Invalid credentials"}), 401
 
 
@@ -269,6 +344,7 @@ def auth():
 @app.route("/api/products", methods=["GET"])
 def get_products():
     logger.info("Fetching all products")
+    track_metric('products_viewed')
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -296,6 +372,7 @@ def add_product():
     conn.commit()
     cursor.close()
     conn.close()
+    track_metric('products_added')
     return jsonify({"message": "Product added"}), 201
 
 
@@ -312,6 +389,7 @@ def update_product(product_id):
     conn.commit()
     cursor.close()
     conn.close()
+    track_metric('products_updated')
     return jsonify({"message": "Product updated"}), 200
 
 
@@ -324,6 +402,7 @@ def delete_product(product_id):
     conn.commit()
     cursor.close()
     conn.close()
+    track_metric('products_deleted')
     return jsonify({"message": "Product deleted"}), 200
 
 
@@ -396,6 +475,7 @@ def add_address():
     conn.commit()
     cursor.close()
     conn.close()
+    track_metric('addresses_added')
     return jsonify({"message": "Address saved successfully", "id": address_id}), 201
 
 
@@ -449,6 +529,8 @@ def place_order():
     cursor.close()
     conn.close()
     logger.info(f"Order placed successfully - Order ID: {order_id}, Total: ₹{total:.2f}")
+    track_metric('orders_placed')
+    track_metric('orders_total_value', total)
     return jsonify({"message": "Order placed", "order_id": order_id}), 201
 
 

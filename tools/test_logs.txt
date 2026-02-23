@@ -1,0 +1,12 @@
+2024-02-16 10:30:15 - __main__ - INFO - [abc123] - Request: GET /api/products
+2024-02-16 10:30:15 - __main__ - INFO - [abc123] - Successfully fetched 10 products
+2024-02-16 10:30:15 - __main__ - INFO - [abc123] - Response: GET /api/products - Status: 200 - Time: 0.045s
+2024-02-16 10:31:20 - __main__ - ERROR - [def456] - Error fetching products: Connection timeout
+2024-02-16 10:32:10 - __main__ - WARNING - [ghi789] - Failed login attempt for mobile: ****1234
+2024-02-16 10:32:11 - __main__ - INFO - [ghi789] - Request: POST /api/auth
+2024-02-16 10:32:11 - __main__ - INFO - [ghi789] - Response: POST /api/auth - Status: 401 - Time: 0.023s
+2024-02-16 10:35:00 - __main__ - INFO - [jkl012] - Request: GET /api/products
+2024-02-16 10:35:02 - __main__ - INFO - [jkl012] - Response: GET /api/products - Status: 200 - Time: 1.234s
+2024-02-16 10:40:00 - __main__ - INFO - [mno345] - Request: POST /api/order
+2024-02-16 10:40:03 - __main__ - INFO - [mno345] - Order placed successfully
+2024-02-16 10:40:03 - __main__ - INFO - [mno345] - Response: POST /api/order - Status: 200 - Time: 2.567s
