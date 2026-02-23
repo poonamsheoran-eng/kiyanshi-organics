@@ -15,9 +15,6 @@ from flask import g
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
 
-SENTRY_DSN = os.environ.get('SENTRY_DSN')
-
-
 app = Flask(__name__)
 
 SENTRY_DSN = os.environ.get('SENTRY_DSN')
