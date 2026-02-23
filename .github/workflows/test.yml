@@ -1,16 +1,27 @@
-name: Run Tests              # Shows in GitHub UI
+name: Run Tests
 
 on:
   push:
-    branches: [ main ]       # Trigger on push to main
+    branches: [ main ]
 
-jobs:                        # Can have multiple jobs
-  test:                      # Job name
-    runs-on: ubuntu-latest   # Use GitHub's Ubuntu computer
-    
-    steps:                   # Sequential steps
-      - name: Checkout       # Step name (descriptive)
-        uses: actions/checkout@v4  # Pre-built action
-      
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
       - name: Run tests
-        run: pytest           # Shell command
+        run: python -m pytest
