@@ -1,0 +1,16 @@
+name: Run Tests              # Shows in GitHub UI
+
+on:
+  push:
+    branches: [ main ]       # Trigger on push to main
+
+jobs:                        # Can have multiple jobs
+  test:                      # Job name
+    runs-on: ubuntu-latest   # Use GitHub's Ubuntu computer
+    
+    steps:                   # Sequential steps
+      - name: Checkout       # Step name (descriptive)
+        uses: actions/checkout@v4  # Pre-built action
+      
+      - name: Run tests
+        run: pytest           # Shell command
